@@ -1,36 +1,43 @@
 import java.util.Properties
 
 import hex.genmodel.GenModel
-import hex.genmodel.easy.prediction.BinomialModelPrediction
-import hex.genmodel.easy.{EasyPredictModelWrapper, RowData}
+import io.confluent.kafka.serializers.KafkaJsonSerializer
 import org.apache.kafka.clients.consumer.{ConsumerRecord, ConsumerRecords, OffsetAndMetadata}
-import org.apache.kafka.clients.producer.{KafkaProducer, Producer, ProducerConfig, ProducerRecord}
+import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
 import org.apache.kafka.common.TopicPartition
 
 import scala.collection.mutable
-import scala.util.parsing.json.JSON
 
-/**
-  * Created by mateusz on 2017/01/26.
-  */
 object Predictor {
 
-  val modelClassName = "autoencoder"
+  val modelClassName = "DeepLearning_model_R_1485934704251_5"
   val sensorTopic = "/streams/sensor:sensor1"
   val predictionTopic = "/streams/sensor:sensor-state-test"
   val producer: KafkaProducer[String, String] = makeProducer()
 
+  var headers = Array("LinAccX..g.","LinAccY..g.","LinAccZ..g.")
+  var features: Int = headers.length
+
+  var threshold = 4.234385e-05
+
   private def makeProducer() = {
     val props = new Properties()
 
-    // TODO check properties
-    props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer")
-    props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer")
+    props.put("key.serializer", classOf[KafkaJsonSerializer[String]].getCanonicalName)
+    props.put("value.serializer", classOf[KafkaJsonSerializer[String]].getCanonicalName)
 
     new KafkaProducer[String, String](props)
   }
 
   def main(args: Array[String]): Unit = {
+    if(args.length == 1) {
+      threshold = args(0).toDouble
+    }
+    if(args.length == 2) {
+      headers = args(1).split(",")
+      features = headers.length
+    }
+
     val consumer = new MapRStreamsConsumerFacade(sensorTopic)
     consumer.prepareSetup()
     println("Prepared")
@@ -41,40 +48,48 @@ object Predictor {
     consumer.close()
   }
 
-  private def record2row(value: String) = {
-    val row: RowData = new RowData()
-    value.split(",").zipWithIndex.map { case(idx, reading) =>
-      row.put(idx, reading)
-    }
-    row
-  }
-
   private def pushPrediction(label: String) = {
+    println(s"Pushing prediction $label")
+
     producer.send(
       new ProducerRecord[String, String](
         predictionTopic,
         "state",
-        label)
+        label
+      )
     )
   }
 
   import scala.collection.JavaConversions._
   def poll(consumer: MapRStreamsConsumerFacade): Unit = {
-//    val rawModel: GenModel = Class.forName(modelClassName).newInstance().asInstanceOf[GenModel]
-//    val model: EasyPredictModelWrapper = new EasyPredictModelWrapper(rawModel)
+    val rb: RingBuffer[Int] = new RingBuffer(100)
+
+    val rawModel: GenModel = Class.forName(modelClassName).newInstance().asInstanceOf[GenModel]
     while(true) {
-      println("Polling")
       val commitMap = new mutable.LinkedHashMap[TopicPartition, OffsetAndMetadata]()
 
       val records: ConsumerRecords[String, String] = consumer.poll()
       println("Polled " + records.count())
 
       for(record: ConsumerRecord[String, String] <- records) {
-        println(record.value())
-        val rowData: RowData = record2row(record.value())
-//        val pred: BinomialModelPrediction = model.predictBinomial(rowData)
-//        pushPrediction(pred.label)
-        pushPrediction("0")
+        val split = record.value().replaceAll("\"", "").split(",")
+        if(split.length >= features) {
+          val preds = Array.fill[Double](features){0}
+          val input = split.takeRight(features).map(_.toDouble)
+          val pred = rawModel.score0(input, preds)
+
+          val rmse = input.zip(pred).map{ case(i,p) =>  (p-i)*(p-i)}.sum/features
+
+          val label = if (rmse > threshold) 1 else 0
+
+          rb.+=(label)
+
+          if(rb.sum >= 20) {
+            pushPrediction("1")
+          } else {
+            pushPrediction("0")
+          }
+        }
       }
 
       if (commitMap.nonEmpty) {
