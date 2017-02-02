@@ -37,9 +37,10 @@ public class MapRStreamsConsumerFacade implements KafkaStreamsConsumerFacade<Str
   private Properties createDefaultProperties() {
     Properties props = new Properties();
     final String topic = pathTopic.substring(pathTopic.indexOf(':'));
+    props.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "52.196.31.33:8082");
     props.setProperty(ConsumerConfig.GROUP_ID_CONFIG, "gid." + topic);
     props.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-    props.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+    props.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
     props.setProperty(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
                       StringDeserializer.class.getCanonicalName());
     props.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
