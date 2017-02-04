@@ -84,6 +84,8 @@ exportPojo <- function() {
     cat("threshold=",toString(threshold),file="../predictions/src/main/resources/dl.properties",sep="",append=F)
 }
 
+exportPojo()
+
 errors <- which(as.matrix(verify_error) > threshold, arr.ind=T)[,1]
 vals <- rep(list(1),length(errors))
 
